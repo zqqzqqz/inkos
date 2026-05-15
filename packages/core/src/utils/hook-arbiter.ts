@@ -4,6 +4,7 @@ import {
   type NewHookCandidate,
   type RuntimeStateDelta,
 } from "../models/runtime-state.js";
+import { normalizeHookId } from "./story-markdown.js";
 import { evaluateHookAdmission } from "./hook-governance.js";
 import { resolveHookPayoffTiming } from "./hook-lifecycle.js";
 
@@ -185,7 +186,7 @@ function buildCanonicalHookId(
   candidate: PendingHookCandidate,
   existingIds: ReadonlySet<string>,
 ): string {
-  const preferred = candidate.preferredHookId?.trim();
+  const preferred = normalizeHookId(candidate.preferredHookId);
   if (preferred && !existingIds.has(preferred)) {
     return preferred;
   }

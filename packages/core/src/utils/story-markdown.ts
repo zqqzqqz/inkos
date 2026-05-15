@@ -248,7 +248,11 @@ export function normalizeHookId(value: string | undefined): string {
       .replace(/^~~(.+)~~$/u, "$1")
       .trim();
   }
-  return normalized;
+  normalized = normalized
+    .replace(/-{2,}/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .trim();
+  return /[a-z0-9\u4e00-\u9fff]/iu.test(normalized) ? normalized : "";
 }
 
 function parsePendingHookRow(row: ReadonlyArray<string | undefined>): StoredHook {

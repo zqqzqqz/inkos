@@ -18,6 +18,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { StoredHook } from "../state/memory-db.js";
 import {
+  normalizeHookId,
   parsePendingHooksMarkdown,
   renderHookSnapshot,
 } from "../utils/story-markdown.js";
@@ -37,6 +38,11 @@ const ZERO_USAGE = {
 // ---------------------------------------------------------------------------
 
 describe("Phase 7 hotfix 1 — half_life roundtrip", () => {
+  it("drops punctuation-only hook ids instead of preserving generated dashes", () => {
+    expect(normalizeHookId("--")).toBe("");
+    expect(normalizeHookId("**H--07**")).toBe("H-07");
+  });
+
   it("renders the 半衰期 column and parses it back with the original value", () => {
     const hooks: StoredHook[] = [
       {
