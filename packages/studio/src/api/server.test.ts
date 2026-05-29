@@ -2485,6 +2485,26 @@ describe("createStudioServer daemon lifecycle", () => {
     );
   });
 
+  it("forwards playMode to runAgentSession for play sessions", async () => {
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+    const response = await app.request("http://localhost/api/v1/agent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        instruction: "开一局",
+        sessionId: "agent-session-1",
+        sessionKind: "play",
+        playMode: "guided",
+      }),
+    });
+    expect(response.status).toBe(200);
+    expect(runAgentSessionMock).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionKind: "play", playMode: "guided" }),
+      "开一局",
+    );
+  });
+
   it("passes configured long-form writing review retries into Studio write-next", async () => {
     await writeFile(
       join(root, "inkos.json"),

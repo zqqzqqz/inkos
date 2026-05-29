@@ -302,6 +302,14 @@ function normalizeStudioRequestedIntent(value: unknown): StudioRequestedIntent |
   return value as StudioRequestedIntent;
 }
 
+function normalizeStudioPlayMode(value: unknown): "open" | "guided" | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (value !== "open" && value !== "guided") {
+    throw new ApiError(400, "INVALID_PLAY_MODE", `Invalid playMode: ${String(value)}`);
+  }
+  return value;
+}
+
 function shouldRunDirectWriteNext(args: {
   readonly instruction: string;
   readonly agentBookId: string | null | undefined;
@@ -2541,6 +2549,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       sessionKind: reqSessionKind,
       actionSource: reqActionSource,
       requestedIntent: reqRequestedIntent,
+      playMode: reqPlayMode,
       model: reqModel,
       service: reqService,
     } = await c.req.json<{
@@ -2550,6 +2559,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       sessionKind?: string;
       actionSource?: string;
       requestedIntent?: string;
+      playMode?: string;
       model?: string;
       service?: string;
     }>();
@@ -2567,6 +2577,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
     const actionSource = normalizeStudioActionSource(reqActionSource);
     const requestedIntent = normalizeStudioRequestedIntent(reqRequestedIntent);
+    const playMode = normalizeStudioPlayMode(reqPlayMode);
 
     broadcast("agent:start", { instruction, activeBookId, sessionId, actionSource, requestedIntent });
 
@@ -2871,6 +2882,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
           projectRoot: root,
           bookId: agentBookId,
           sessionKind,
+          playMode,
           sessionId: bookSession.sessionId,
           language: config.language ?? "zh",
           onEvent: (event) => {
