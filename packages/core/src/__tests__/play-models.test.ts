@@ -102,6 +102,20 @@ describe("play models", () => {
     expect(intent.secondaryActions).toHaveLength(1);
   });
 
+  it("normalizes null/empty target labels to undefined (no-target actions must not crash)", () => {
+    const intent = PlayActionIntentSchema.parse({
+      actionKind: "look",
+      targetEntityLabel: "枪",
+      targetLocationLabel: null,
+      intent: "查看枪上有没有编号",
+    });
+    expect(intent.targetLocationLabel).toBeUndefined();
+    expect(intent.targetEntityLabel).toBe("枪");
+
+    const empty = PlayActionIntentSchema.parse({ actionKind: "wait", targetEntityLabel: "" });
+    expect(empty.targetEntityLabel).toBeUndefined();
+  });
+
   it("accepts a mutation envelope for world changes", () => {
     const mutation = PlayMutationSchema.parse({
       eventId: "event-0002",

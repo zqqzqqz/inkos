@@ -5,8 +5,11 @@ export type PlayActionKind = z.infer<typeof PlayActionKindSchema>;
 
 export const PlayActionIntentSchema = z.object({
   actionKind: PlayActionKindSchema,
-  targetEntityLabel: z.string().min(1).optional(),
-  targetLocationLabel: z.string().min(1).optional(),
+  // Interpreters often emit null (not just an absent field) when an action has no
+  // entity/location target. Accept null/empty and normalize to undefined so a valid
+  // no-target action (look/say/wait) does not crash play_step on a Zod type error.
+  targetEntityLabel: z.string().nullish().transform((v) => (v && v.trim() ? v : undefined)),
+  targetLocationLabel: z.string().nullish().transform((v) => (v && v.trim() ? v : undefined)),
   intent: z.string().default(""),
   manner: z.string().default(""),
   risk: z.string().default(""),
