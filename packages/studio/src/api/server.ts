@@ -45,6 +45,7 @@ import {
   coverSecretKey,
   resolveCoverProviderPreset,
   SessionKindSchema,
+  inferLanguage,
   type ResolvedModel,
   type PipelineConfig,
   type ProjectConfig,
@@ -2872,6 +2873,14 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
         }
       }
 
+      // The surface agent should speak the user's language, not just the project default.
+      // Pre-commitment surfaces (chat / play / short / book-create, no book yet) infer it
+      // from the instruction; committed book/edit sessions keep the configured language.
+      // Without this, an English request on a zh-default project gets Chinese replies — and
+      // a Chinese play world, because play_start then infers from the rewritten premise.
+      const configLanguage = config.language === "en" ? "en" : "zh";
+      const surfaceLanguage = agentBookId ? configLanguage : inferLanguage(instruction);
+
       // Run pi-agent session
       const collectedToolExecs: CollectedToolExec[] = [];
       const result = await runAgentSession(
@@ -2886,7 +2895,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
           actionSource,
           requestedIntent,
           sessionId: bookSession.sessionId,
-          language: config.language ?? "zh",
+          language: surfaceLanguage,
           onEvent: (event) => {
             if (event.type === "message_update") {
               const ame = event.assistantMessageEvent;
@@ -3051,7 +3060,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
             fallbackClient,
             reqModel ?? config.llm.model,
             [
-              { role: "system", content: buildAgentSystemPrompt(agentBookId, config.language ?? "zh", sessionKind, { actionSource, requestedIntent }) },
+              { role: "system", content: buildAgentSystemPrompt(agentBookId, surfaceLanguage, sessionKind, { actionSource, requestedIntent }) },
               { role: "user", content: instruction },
             ],
             { maxTokens: 256 },
