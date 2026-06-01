@@ -337,21 +337,29 @@ async function generateCoverImageArtifact(input: {
     coverApiKeyEnv: input.coverApiKeyEnv,
   });
   const size = input.coverSize || process.env.INKOS_COVER_SIZE || "1024x1360";
+  const { buffer, extension } = await generateImageFromPrompt(request, buildCoverImagePrompt(input.salesPackage), size);
+  const coverPath = join(input.outputDir, extension === "jpg" ? "cover.jpg" : "cover.png");
+  await writeBinary(input.root, coverPath, buffer);
+  return { coverImagePath: projectPath(coverPath) };
+}
 
+/**
+ * Generate one image from a free-text prompt via whichever image API the cover
+ * config resolves to (gemini / images / responses). Shared by cover generation
+ * and the interactive-world (Play) illustration feature so both go through the
+ * same provider plumbing.
+ */
+export async function generateImageFromPrompt(
+  request: ShortFictionCoverRequest,
+  prompt: string,
+  size: string,
+): Promise<{ readonly buffer: Buffer; readonly extension: "png" | "jpg" }> {
   if (request.api === "gemini") {
-    const prompt = buildCoverImagePrompt(input.salesPackage);
     const payload = await generateGeminiCover(request, prompt);
-    const coverPath = join(input.outputDir, payload.extension === "jpg" ? "cover.jpg" : "cover.png");
-    await writeBinary(input.root, coverPath, Buffer.from(payload.base64, "base64"));
-    return { coverImagePath: projectPath(coverPath) };
+    return { buffer: Buffer.from(payload.base64, "base64"), extension: payload.extension };
   }
-
   if (request.api === "images") {
-    const prompt = buildCoverImagePrompt(input.salesPackage);
-    const payload = await generateImagesCover(request, prompt, size);
-    const coverPath = join(input.outputDir, payload.extension === "jpg" ? "cover.jpg" : "cover.png");
-    await writeBinary(input.root, coverPath, payload.buffer);
-    return { coverImagePath: projectPath(coverPath) };
+    return generateImagesCover(request, prompt, size);
   }
 
   const endpoint = request.endpoint ?? `${request.baseUrl.replace(/\/+$/u, "")}/responses`;
@@ -363,30 +371,27 @@ async function generateCoverImageArtifact(input: {
     },
     body: JSON.stringify({
       model: request.model,
-      input: buildCoverImagePrompt(input.salesPackage),
+      input: prompt,
       tools: [{ type: "image_generation", size }],
     }),
   });
   const text = await response.text();
   if (!response.ok) {
-    throw new Error(`cover generation failed: HTTP ${response.status} ${text.slice(0, 500)}`);
+    throw new Error(`image generation failed: HTTP ${response.status} ${text.slice(0, 500)}`);
   }
 
   let payload: unknown;
   try {
     payload = JSON.parse(text);
   } catch (error) {
-    throw new Error(`cover generation returned non-JSON response: ${String(error)}`);
+    throw new Error(`image generation returned non-JSON response: ${String(error)}`);
   }
 
   const imageBase64 = extractResponsesImageBase64(payload);
   if (!imageBase64) {
-    throw new Error("cover generation response did not include image_generation_call result.");
+    throw new Error("image generation response did not include image_generation_call result.");
   }
-
-  const coverPath = join(input.outputDir, "cover.png");
-  await writeBinary(input.root, coverPath, Buffer.from(imageBase64, "base64"));
-  return { coverImagePath: projectPath(coverPath) };
+  return { buffer: Buffer.from(imageBase64, "base64"), extension: "png" };
 }
 
 export interface ShortFictionCoverRequest {
