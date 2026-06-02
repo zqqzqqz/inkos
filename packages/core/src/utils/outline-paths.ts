@@ -56,14 +56,24 @@ export async function isBookFoundationComplete(bookDir: string): Promise<boolean
       return false;
     }
   }
-  // At least one character sheet under either locale's "major roles" dir.
-  for (const tier of ["主要角色", "major"]) {
+  // Roles must exist via EITHER source the runtime actually reads: a character
+  // sheet under the new roles/<tier>/ dir, OR the legacy character_matrix.md
+  // (readCharacterContext falls back to it). The architect routinely persists
+  // roles to character_matrix.md, so requiring the roles/ dir alone falsely
+  // reported a complete book as "missing".
+  for (const tier of ["主要角色", "major", "次要角色", "minor"]) {
     try {
       const entries = await readdir(join(bookDir, "story", "roles", tier));
       if (entries.some((file) => file.endsWith(".md"))) return true;
     } catch {
-      // Try the other locale's directory.
+      // Try the next locale/tier directory.
     }
+  }
+  try {
+    const matrix = await readFile(join(bookDir, "story", "character_matrix.md"), "utf-8");
+    if (matrix.trim().length > 0) return true;
+  } catch {
+    // No legacy matrix either.
   }
   return false;
 }

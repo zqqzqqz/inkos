@@ -50,8 +50,16 @@ describe("isBookFoundationComplete", () => {
     expect(await isBookFoundationComplete(dir)).toBe(false);
   });
 
-  it("is false when the foundation files exist but no character sheet was written", async () => {
+  it("is false when neither a roles/ sheet nor character_matrix.md exists", async () => {
     await writeFoundation(dir, { bookJson: true, storyFrame: true, volumeMap: true, bookRules: true, pendingHooks: true });
     expect(await isBookFoundationComplete(dir)).toBe(false);
+  });
+
+  it("accepts roles persisted to legacy character_matrix.md (the runtime's fallback source)", async () => {
+    // The architect routinely writes roles to character_matrix.md instead of the
+    // roles/ dir; the runtime reads either, so this book IS complete/usable.
+    await writeFoundation(dir, { bookJson: true, storyFrame: true, volumeMap: true, bookRules: true, pendingHooks: true });
+    await writeFile(join(dir, "story", "character_matrix.md"), "## 林秋\n- 定位: 主角");
+    expect(await isBookFoundationComplete(dir)).toBe(true);
   });
 });
