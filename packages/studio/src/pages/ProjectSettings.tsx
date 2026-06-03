@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Bell, Bot, Radar, Settings2 } from "lucide-react";
+import { Bell, Bot, Radar, Settings2, Plus, Trash2 } from "lucide-react";
 import { fetchJson, putApi, useApi } from "../hooks/use-api";
 import type { Theme } from "../hooks/use-theme";
 import type { TFunction } from "../hooks/use-i18n";
@@ -12,14 +12,66 @@ interface Nav {
 
 type NoticeTone = "success" | "error" | "info";
 
-function prettyJson(value: unknown): string {
-  return JSON.stringify(value, null, 2);
+type NotifyType = "telegram" | "wechat-work" | "feishu" | "webhook";
+
+interface NotifyChannelDraft {
+  type: NotifyType;
+  botToken?: string;
+  chatId?: string;
+  webhookUrl?: string;
+  url?: string;
+  secret?: string;
 }
 
-function parseJsonField(raw: string): unknown {
-  const trimmed = raw.trim();
-  if (!trimmed) return null;
-  return JSON.parse(trimmed);
+interface OverrideRow {
+  agent: string;
+  model: string;
+  // Preserve advanced object-form fields (provider/baseUrl/apiKeyEnv/stream) we
+  // don't surface as editable, so a structured edit never drops them.
+  rest?: Record<string, unknown>;
+}
+
+interface DetectionDraft {
+  enabled: boolean;
+  provider: string;
+  apiUrl: string;
+  apiKeyEnv: string;
+  threshold: number;
+  autoRewrite: boolean;
+  maxRetries: number;
+}
+
+const DEFAULT_DETECTION: DetectionDraft = {
+  enabled: false,
+  provider: "custom",
+  apiUrl: "",
+  apiKeyEnv: "",
+  threshold: 0.5,
+  autoRewrite: false,
+  maxRetries: 3,
+};
+
+const NOTIFY_TYPES: ReadonlyArray<{ value: NotifyType; label: string }> = [
+  { value: "telegram", label: "Telegram" },
+  { value: "feishu", label: "飞书 Feishu" },
+  { value: "wechat-work", label: "企业微信" },
+  { value: "webhook", label: "Webhook" },
+];
+
+function buildNotifyChannel(d: NotifyChannelDraft): Record<string, unknown> {
+  if (d.type === "telegram") return { type: "telegram", botToken: d.botToken ?? "", chatId: d.chatId ?? "" };
+  if (d.type === "wechat-work") return { type: "wechat-work", webhookUrl: d.webhookUrl ?? "" };
+  if (d.type === "feishu") return { type: "feishu", webhookUrl: d.webhookUrl ?? "" };
+  return { type: "webhook", url: d.url ?? "", ...(d.secret ? { secret: d.secret } : {}), events: [] };
+}
+
+// Smooth open/close via grid-template-rows (same trick as the sidebar).
+function Collapse({ open, children }: { open: boolean; children: React.ReactNode }) {
+  return (
+    <div className={`grid transition-[grid-template-rows] duration-200 ease-out ${open ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}>
+      <div className="overflow-hidden">{children}</div>
+    </div>
+  );
 }
 
 function SettingsCard({
@@ -47,6 +99,8 @@ function SettingsCard({
   );
 }
 
+const fieldClass = "w-full rounded-lg border border-border bg-secondary/30 px-3 py-2 text-sm outline-none focus:border-primary/50";
+
 export function ProjectSettings({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunction }) {
   const c = useColors(theme);
   const { data: overridesData, refetch: refetchOverrides } = useApi<{ overrides: Record<string, unknown> }>("/project/model-overrides");
@@ -54,9 +108,9 @@ export function ProjectSettings({ nav, theme, t }: { nav: Nav; theme: Theme; t: 
   const { data: modeData, refetch: refetchMode } = useApi<{ mode: "legacy" | "v2" }>("/project/input-governance-mode");
   const { data: detectionData, refetch: refetchDetection } = useApi<{ detection: unknown | null }>("/project/detection");
   const [mode, setMode] = useState<"legacy" | "v2">("v2");
-  const [overridesText, setOverridesText] = useState("{}");
-  const [notifyText, setNotifyText] = useState("[]");
-  const [detectionText, setDetectionText] = useState("null");
+  const [overrideRows, setOverrideRows] = useState<OverrideRow[]>([]);
+  const [notifyChannels, setNotifyChannels] = useState<NotifyChannelDraft[]>([]);
+  const [det, setDet] = useState<DetectionDraft>({ ...DEFAULT_DETECTION });
   const [notice, setNotice] = useState<{ tone: NoticeTone; message: string } | null>(null);
   const [saving, setSaving] = useState<string | null>(null);
 
@@ -65,15 +119,23 @@ export function ProjectSettings({ nav, theme, t }: { nav: Nav; theme: Theme; t: 
   }, [modeData]);
 
   useEffect(() => {
-    if (overridesData) setOverridesText(prettyJson(overridesData.overrides ?? {}));
+    if (!overridesData) return;
+    setOverrideRows(Object.entries(overridesData.overrides ?? {}).map(([agent, val]) => {
+      if (typeof val === "string") return { agent, model: val };
+      const { model, ...rest } = (val ?? {}) as { model?: string };
+      return { agent, model: model ?? "", rest };
+    }));
   }, [overridesData]);
 
   useEffect(() => {
-    if (notifyData) setNotifyText(prettyJson(notifyData.channels ?? []));
+    if (!notifyData) return;
+    setNotifyChannels((notifyData.channels ?? []).map((ch) => ({ ...(ch as object) }) as NotifyChannelDraft));
   }, [notifyData]);
 
   useEffect(() => {
-    if (detectionData) setDetectionText(prettyJson(detectionData.detection ?? null));
+    if (!detectionData) return;
+    const d = detectionData.detection as Partial<DetectionDraft> | null;
+    setDet(d ? { ...DEFAULT_DETECTION, ...d, enabled: true } : { ...DEFAULT_DETECTION });
   }, [detectionData]);
 
   const runSave = async (key: string, work: () => Promise<void>, success: string) => {
@@ -89,6 +151,10 @@ export function ProjectSettings({ nav, theme, t }: { nav: Nav; theme: Theme; t: 
     }
   };
 
+  const updateChannel = (index: number, patch: Partial<NotifyChannelDraft>) => {
+    setNotifyChannels((prev) => prev.map((ch, i) => (i === index ? { ...ch, ...patch } : ch)));
+  };
+
   return (
     <div className="space-y-8">
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -102,9 +168,7 @@ export function ProjectSettings({ nav, theme, t }: { nav: Nav; theme: Theme; t: 
           <Settings2 size={28} className="text-primary" />
           {t("settings.title")}
         </h1>
-        <p className="text-sm text-muted-foreground">
-          {t("settings.subtitle")}
-        </p>
+        <p className="text-sm text-muted-foreground">{t("settings.subtitle")}</p>
       </div>
 
       {notice && (
@@ -121,11 +185,7 @@ export function ProjectSettings({ nav, theme, t }: { nav: Nav; theme: Theme; t: 
         </div>
       )}
 
-      <SettingsCard
-        title={t("settings.inputGovernance")}
-        description={t("settings.inputGovernanceHint")}
-        icon={<Radar size={18} />}
-      >
+      <SettingsCard title={t("settings.inputGovernance")} description={t("settings.inputGovernanceHint")} icon={<Radar size={18} />}>
         <div className="flex flex-wrap items-center gap-3">
           <select
             value={mode}
@@ -148,23 +208,54 @@ export function ProjectSettings({ nav, theme, t }: { nav: Nav; theme: Theme; t: 
         </div>
       </SettingsCard>
 
-      <SettingsCard
-        title={t("settings.modelOverrides")}
-        description={t("settings.modelOverridesHint")}
-        icon={<Bot size={18} />}
-      >
-        <textarea
-          value={overridesText}
-          onChange={(e) => setOverridesText(e.target.value)}
-          rows={8}
-          className="w-full rounded-xl border border-border bg-secondary/30 px-3 py-2 font-mono text-xs outline-none focus:border-primary/50"
-        />
-        <div className="flex gap-2">
+      {/* Model routing — per-agent model overrides */}
+      <SettingsCard title={t("settings.modelOverrides")} description={t("settings.modelOverridesHint")} icon={<Bot size={18} />}>
+        <div className="space-y-2">
+          {overrideRows.length === 0 && (
+            <p className="text-xs text-muted-foreground italic">{t("settings.noOverrides")}</p>
+          )}
+          {overrideRows.map((row, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <input
+                value={row.agent}
+                onChange={(e) => setOverrideRows((prev) => prev.map((r, j) => (j === i ? { ...r, agent: e.target.value } : r)))}
+                placeholder={t("settings.agentName")}
+                className={`${fieldClass} flex-1`}
+              />
+              <span className="text-muted-foreground">→</span>
+              <input
+                value={row.model}
+                onChange={(e) => setOverrideRows((prev) => prev.map((r, j) => (j === i ? { ...r, model: e.target.value } : r)))}
+                placeholder={t("settings.modelId")}
+                className={`${fieldClass} flex-1 font-mono`}
+              />
+              <button
+                onClick={() => setOverrideRows((prev) => prev.filter((_, j) => j !== i))}
+                className="shrink-0 rounded-lg p-2 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
+                aria-label="remove"
+              >
+                <Trash2 size={15} />
+              </button>
+            </div>
+          ))}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={() => setOverrideRows((prev) => [...prev, { agent: "", model: "" }])}
+            className={`flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium ${c.btnSecondary}`}
+          >
+            <Plus size={14} /> {t("settings.addOverride")}
+          </button>
           <button
             onClick={() => runSave("overrides", async () => {
-              const parsed = parseJsonField(overridesText);
-              if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") throw new Error("modelOverrides must be a JSON object");
-              await putApi("/project/model-overrides", { overrides: parsed });
+              const overrides: Record<string, unknown> = {};
+              for (const r of overrideRows) {
+                const agent = r.agent.trim();
+                const model = r.model.trim();
+                if (!agent || !model) continue;
+                overrides[agent] = r.rest && Object.keys(r.rest).length > 0 ? { ...r.rest, model } : model;
+              }
+              await putApi("/project/model-overrides", { overrides });
               await refetchOverrides();
             }, t("settings.saved"))}
             disabled={saving === "overrides"}
@@ -178,48 +269,130 @@ export function ProjectSettings({ nav, theme, t }: { nav: Nav; theme: Theme; t: 
         </div>
       </SettingsCard>
 
-      <SettingsCard
-        title={t("settings.notify")}
-        description={t("settings.notifyHint")}
-        icon={<Bell size={18} />}
-      >
-        <textarea
-          value={notifyText}
-          onChange={(e) => setNotifyText(e.target.value)}
-          rows={8}
-          className="w-full rounded-xl border border-border bg-secondary/30 px-3 py-2 font-mono text-xs outline-none focus:border-primary/50"
-        />
-        <button
-          onClick={() => runSave("notify", async () => {
-            const parsed = parseJsonField(notifyText);
-            if (!Array.isArray(parsed)) throw new Error("notify channels must be a JSON array");
-            await putApi("/project/notify", { channels: parsed });
-            await refetchNotify();
-          }, t("settings.saved"))}
-          disabled={saving === "notify"}
-          className={`rounded-lg px-4 py-2 text-sm font-bold ${c.btnPrimary} disabled:opacity-40`}
-        >
-          {saving === "notify" ? t("config.saving") : t("config.save")}
-        </button>
+      {/* Notification channels */}
+      <SettingsCard title={t("settings.notify")} description={t("settings.notifyHint")} icon={<Bell size={18} />}>
+        <div className="space-y-3">
+          {notifyChannels.length === 0 && (
+            <p className="text-xs text-muted-foreground italic">{t("settings.noChannels")}</p>
+          )}
+          {notifyChannels.map((ch, i) => (
+            <div key={i} className="rounded-xl border border-border/60 bg-secondary/20 p-3 space-y-2">
+              <div className="flex items-center gap-2">
+                <select
+                  value={ch.type}
+                  onChange={(e) => updateChannel(i, { type: e.target.value as NotifyType })}
+                  className="rounded-lg border border-border bg-background px-3 py-1.5 text-sm outline-none"
+                >
+                  {NOTIFY_TYPES.map((nt) => <option key={nt.value} value={nt.value}>{nt.label}</option>)}
+                </select>
+                <div className="flex-1" />
+                <button
+                  onClick={() => setNotifyChannels((prev) => prev.filter((_, j) => j !== i))}
+                  className="rounded-lg p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
+                  aria-label="remove"
+                >
+                  <Trash2 size={15} />
+                </button>
+              </div>
+              {ch.type === "telegram" && (
+                <div className="grid grid-cols-2 gap-2">
+                  <input value={ch.botToken ?? ""} onChange={(e) => updateChannel(i, { botToken: e.target.value })} placeholder="botToken" className={`${fieldClass} font-mono`} />
+                  <input value={ch.chatId ?? ""} onChange={(e) => updateChannel(i, { chatId: e.target.value })} placeholder="chatId" className={`${fieldClass} font-mono`} />
+                </div>
+              )}
+              {(ch.type === "feishu" || ch.type === "wechat-work") && (
+                <input value={ch.webhookUrl ?? ""} onChange={(e) => updateChannel(i, { webhookUrl: e.target.value })} placeholder="webhookUrl" className={`${fieldClass} font-mono`} />
+              )}
+              {ch.type === "webhook" && (
+                <div className="grid grid-cols-2 gap-2">
+                  <input value={ch.url ?? ""} onChange={(e) => updateChannel(i, { url: e.target.value })} placeholder="url" className={`${fieldClass} font-mono`} />
+                  <input value={ch.secret ?? ""} onChange={(e) => updateChannel(i, { secret: e.target.value })} placeholder="secret (可选)" className={`${fieldClass} font-mono`} />
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+        <div className="flex gap-2">
+          <button
+            onClick={() => setNotifyChannels((prev) => [...prev, { type: "feishu" }])}
+            className={`flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium ${c.btnSecondary}`}
+          >
+            <Plus size={14} /> {t("settings.addChannel")}
+          </button>
+          <button
+            onClick={() => runSave("notify", async () => {
+              await putApi("/project/notify", { channels: notifyChannels.map(buildNotifyChannel) });
+              await refetchNotify();
+            }, t("settings.saved"))}
+            disabled={saving === "notify"}
+            className={`rounded-lg px-4 py-2 text-sm font-bold ${c.btnPrimary} disabled:opacity-40`}
+          >
+            {saving === "notify" ? t("config.saving") : t("config.save")}
+          </button>
+        </div>
       </SettingsCard>
 
-      <SettingsCard
-        title={t("settings.detection")}
-        description={t("settings.detectionHint")}
-        icon={<Radar size={18} />}
-      >
-        <textarea
-          value={detectionText}
-          onChange={(e) => setDetectionText(e.target.value)}
-          rows={9}
-          className="w-full rounded-xl border border-border bg-secondary/30 px-3 py-2 font-mono text-xs outline-none focus:border-primary/50"
-        />
+      {/* AIGC detection */}
+      <SettingsCard title={t("settings.detection")} description={t("settings.detectionHint")} icon={<Radar size={18} />}>
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={det.enabled} onChange={(e) => setDet((d) => ({ ...d, enabled: e.target.checked }))} />
+          {t("settings.detectionEnable")}
+        </label>
+        <Collapse open={det.enabled}>
+          <div className="space-y-2 pt-1">
+            <div className="grid grid-cols-2 gap-2">
+              <label className="text-xs text-muted-foreground space-y-1">
+                <span>{t("settings.detectionProvider")}</span>
+                <select value={det.provider} onChange={(e) => setDet((d) => ({ ...d, provider: e.target.value }))} className={fieldClass}>
+                  <option value="custom">custom</option>
+                  <option value="gptzero">gptzero</option>
+                  <option value="originality">originality</option>
+                </select>
+              </label>
+              <label className="text-xs text-muted-foreground space-y-1">
+                <span>{t("settings.detectionApiKeyEnv")}</span>
+                <input value={det.apiKeyEnv} onChange={(e) => setDet((d) => ({ ...d, apiKeyEnv: e.target.value }))} placeholder="DETECTOR_API_KEY" className={`${fieldClass} font-mono`} />
+              </label>
+            </div>
+            <label className="text-xs text-muted-foreground space-y-1 block">
+              <span>{t("settings.detectionApiUrl")}</span>
+              <input value={det.apiUrl} onChange={(e) => setDet((d) => ({ ...d, apiUrl: e.target.value }))} placeholder="https://..." className={`${fieldClass} font-mono`} />
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="text-xs text-muted-foreground space-y-1">
+                <span>{t("settings.detectionThreshold")} (0–1)</span>
+                <input type="number" min={0} max={1} step={0.05} value={det.threshold} onChange={(e) => setDet((d) => ({ ...d, threshold: Number(e.target.value) }))} className={fieldClass} />
+              </label>
+              <label className="text-xs text-muted-foreground space-y-1">
+                <span>{t("settings.detectionMaxRetries")} (1–10)</span>
+                <input type="number" min={1} max={10} step={1} value={det.maxRetries} onChange={(e) => setDet((d) => ({ ...d, maxRetries: Number(e.target.value) }))} className={fieldClass} />
+              </label>
+            </div>
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={det.autoRewrite} onChange={(e) => setDet((d) => ({ ...d, autoRewrite: e.target.checked }))} />
+              {t("settings.detectionAutoRewrite")}
+            </label>
+          </div>
+        </Collapse>
         <button
           onClick={() => runSave("detection", async () => {
+            const payload = det.enabled
+              ? {
+                  detection: {
+                    provider: det.provider,
+                    apiUrl: det.apiUrl,
+                    apiKeyEnv: det.apiKeyEnv,
+                    threshold: det.threshold,
+                    enabled: true,
+                    autoRewrite: det.autoRewrite,
+                    maxRetries: det.maxRetries,
+                  },
+                }
+              : { detection: null };
             await fetchJson("/project/detection", {
               method: "PUT",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ detection: parseJsonField(detectionText) }),
+              body: JSON.stringify(payload),
             });
             await refetchDetection();
           }, t("settings.saved"))}
