@@ -96,7 +96,7 @@ describe("PlayRunner", () => {
       },
       edges: {
         upsert: [
-          { fromId: "player", type: "持有", toId: "nav-stats" },
+          { fromId: "player", type: "持有", toId: "nav-stats", value: { role: "holding" } },
         ],
       },
       stateSlots: {
@@ -142,7 +142,7 @@ describe("PlayRunner", () => {
     expect(db.events).toHaveLength(1);
     expect(db.entities.get("nav-stats")?.type).toBe("evidence");
     const renderInput = renderSpy.mock.calls[0]?.[0] as { stateBrief: string } | undefined;
-    expect(renderInput?.stateBrief).toContain("player -[持有]-> nav-stats");
+    expect(renderInput?.stateBrief).toContain("player -[持有 role=holding]-> nav-stats");
     expect(db.stateSlots.get("evidence:nav-stats:status")?.value).toMatchObject({ status: "seen" });
 
     const runDir = join(root, "worlds", "betrayal-car", "runs", "run-1");

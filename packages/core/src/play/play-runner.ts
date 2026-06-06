@@ -237,7 +237,10 @@ function renderStateBrief(input: {
   if (input.mutation.edges.upsert.length > 0) {
     lines.push("", "## Edges");
     for (const edge of input.mutation.edges.upsert) {
-      lines.push(`- ${edge.fromId} -[${edge.type}]-> ${edge.toId}`);
+      const role = typeof edge.value?.role === "string" && edge.value.role.trim()
+        ? ` role=${edge.value.role.trim()}`
+        : "";
+      lines.push(`- ${edge.fromId} -[${edge.type}${role}]-> ${edge.toId}`);
     }
   }
   if (input.mutation.stateSlots.upsert.length > 0) {
