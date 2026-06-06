@@ -64,7 +64,7 @@ function StageIcon({ status }: { status: PipelineStage["status"] }) {
 
 function formatProgress(progress: NonNullable<PipelineStage["progress"]>): string {
   const secs = Math.round(progress.elapsedMs / 1000);
-  const statusLabel = progress.status === "thinking" ? "思考中" : "";
+  const statusLabel = progress.status === "thinking" ? "思考中" : progress.status ?? "";
   const chars = progress.totalChars > 0
     ? progress.chineseChars > 0 ? `${progress.totalChars}字` : `${progress.totalChars} chars`
     : "";
@@ -334,7 +334,7 @@ function PlayResultPreview({ exec }: { exec: ToolExecution }) {
 }
 
 function isPipelineTool(tool: string): boolean {
-  return tool === "sub_agent" || tool === "propose_action" || tool === "short_fiction_run" || tool === "generate_cover" || tool === "play_start" || tool === "play_step";
+  return tool === "sub_agent" || tool === "context_compression" || tool === "propose_action" || tool === "short_fiction_run" || tool === "generate_cover" || tool === "play_start" || tool === "play_step";
 }
 
 // -- Live elapsed timer hook --
@@ -403,6 +403,29 @@ function PipelineExecution({
       <PlayResultPreview exec={exec} />
       <CollapsibleContent>
         <div className="px-3 pb-3 pt-1">
+          {exec.stages && exec.stages.length > 0 && (
+            <ol className="mb-2 space-y-1.5">
+              {exec.stages.map((stage) => (
+                <li
+                  key={stage.label}
+                  className={[
+                    "flex items-start gap-2 rounded-lg px-2 py-1.5 text-xs",
+                    stage.status === "active" ? "bg-primary/5 text-foreground" : "text-muted-foreground",
+                  ].join(" ")}
+                >
+                  <StageIcon status={stage.status} />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate">{stage.label}</div>
+                    {stage.progress && (
+                      <div className="mt-0.5 text-[10px] text-muted-foreground/70">
+                        {formatProgress(stage.progress)}
+                      </div>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ol>
+          )}
           {/* Real-time execution logs */}
           {exec.logs && exec.logs.length > 0 && (
             <ul className="space-y-0.5">

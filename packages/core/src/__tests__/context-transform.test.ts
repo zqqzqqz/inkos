@@ -74,6 +74,33 @@ describe("createBookContextTransform", () => {
     expect(content).not.toContain("UNBOUNDED_BODY_SHOULD_NOT_BE_INJECTED");
   });
 
+  it("emits session context compression lifecycle events when compacting truth files", async () => {
+    const storyDir = join(projectRoot, "books", bookId, "story");
+    await writeFile(
+      join(storyDir, "story_bible.md"),
+      [
+        "# Story Bible",
+        "## 活跃设定",
+        "当前目标：继续追查旧案。",
+        "UNBOUNDED_BODY_SHOULD_NOT_BE_INJECTED ".repeat(500),
+      ].join("\n"),
+    );
+    const events: Array<{ readonly category: string; readonly phase: string; readonly sources?: readonly string[] }> = [];
+
+    const transform = createBookContextTransform(bookId, projectRoot, {
+      onContextCompression: (event) => events.push(event),
+    });
+    await transform([
+      { role: "user" as const, content: "讨论下一章", timestamp: Date.now() },
+    ]);
+
+    expect(events.map((event) => [event.category, event.phase])).toEqual([
+      ["session_context", "start"],
+      ["session_context", "end"],
+    ]);
+    expect(events[0].sources).toContain("story_bible.md");
+  });
+
   it("sorts truth files in priority order", async () => {
     const storyDir = join(projectRoot, "books", bookId, "story");
     await writeFile(join(storyDir, "volume_outline.md"), "# Volume Outline");

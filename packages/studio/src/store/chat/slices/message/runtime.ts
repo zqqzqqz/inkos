@@ -24,6 +24,7 @@ const TOOL_LABELS: Record<string, string> = {
   edit: "编辑文件",
   grep: "搜索",
   ls: "列目录",
+  context_compression: "整理上下文",
   propose_action: "确认动作",
   short_fiction_run: "短篇生产",
   generate_cover: "生成封面",

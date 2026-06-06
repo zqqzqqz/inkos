@@ -20,6 +20,7 @@ import {
 } from "../utils/context-assembly.js";
 import { writeGovernedRuntimeArtifacts } from "../utils/runtime-writer.js";
 import { estimateTextTokens, type LLMClient } from "../llm/provider.js";
+import type { ContextCompressionCallback } from "../models/context-compression.js";
 
 export interface ComposeChapterInput {
   readonly book: BookConfig;
@@ -29,6 +30,7 @@ export interface ComposeChapterInput {
   readonly contextBudget?: ContextBudget;
   readonly compressibleContextCompiler?: CompressibleContextCompiler;
   readonly outlineSectionSelector?: OutlineSectionSelector;
+  readonly onContextCompression?: ContextCompressionCallback;
 }
 
 export interface ContextBudget {
@@ -94,6 +96,7 @@ export async function composeGovernedChapter(input: ComposeChapterInput): Promis
     language: input.book.language ?? "zh",
     contextBudget: input.contextBudget,
     compiler: input.compressibleContextCompiler,
+    onContextCompression: input.onContextCompression,
   });
   const contextPackage = budgeted.contextPackage;
 
@@ -134,6 +137,7 @@ async function applyContextBudgetIfNeeded(params: {
   readonly language: "zh" | "en";
   readonly contextBudget?: ContextBudget;
   readonly compiler?: CompressibleContextCompiler;
+  readonly onContextCompression?: ContextCompressionCallback;
 }): Promise<{ readonly contextPackage: ContextPackage; readonly notes: string[] }> {
   const budget = params.contextBudget;
   if (!budget || budget.contextWindowTokens <= 0) {
@@ -151,6 +155,15 @@ async function applyContextBudgetIfNeeded(params: {
   const compressibleEntries = selectedContext.filter((entry) => !isProtectedContextSource(entry.source));
   const protectedTokens = estimateSelectedContextTokens(protectedEntries);
   if (protectedTokens > availableInputTokens) {
+    params.onContextCompression?.({
+      category: "story_context",
+      phase: "error",
+      message: "Protected context exceeds available input budget.",
+      protectedTokens,
+      compressibleTokens: totalTokens - protectedTokens,
+      budgetTokens: availableInputTokens,
+      sources: protectedEntries.map((entry) => entry.source),
+    });
     throw new Error(
       `Protected context exceeds available input budget (${protectedTokens}/${availableInputTokens} tokens). ` +
       "InkOS will not compress protected author intent, current focus, hard state, or active hook evidence.",
@@ -160,23 +173,73 @@ async function applyContextBudgetIfNeeded(params: {
     return { contextPackage: params.contextPackage, notes: ["context-over-budget-no-compressible-entries"] };
   }
   if (!params.compiler) {
+    params.onContextCompression?.({
+      category: "story_context",
+      phase: "error",
+      message: "Context exceeds available input budget but no compiler was provided.",
+      protectedTokens,
+      compressibleTokens: estimateSelectedContextTokens(compressibleEntries),
+      budgetTokens: availableInputTokens,
+      sources: compressibleEntries.map((entry) => entry.source),
+    });
     throw new Error(
       `Context exceeds available input budget (${totalTokens}/${availableInputTokens} tokens), ` +
       "but no compressible context compiler was provided.",
     );
   }
 
-  const compiled = (await params.compiler({
-    chapterNumber: params.chapterNumber,
-    goal: params.goal,
-    language: params.language,
-    maxInputTokens: Math.max(1, availableInputTokens - protectedTokens),
-    protectedEntries,
-    compressibleEntries,
-  })).trim();
+  const compileBudget = Math.max(1, availableInputTokens - protectedTokens);
+  const compressibleTokens = estimateSelectedContextTokens(compressibleEntries);
+  params.onContextCompression?.({
+    category: "story_context",
+    phase: "start",
+    protectedTokens,
+    compressibleTokens,
+    budgetTokens: compileBudget,
+    sources: compressibleEntries.map((entry) => entry.source),
+  });
+  let compiled: string;
+  try {
+    compiled = (await params.compiler({
+      chapterNumber: params.chapterNumber,
+      goal: params.goal,
+      language: params.language,
+      maxInputTokens: compileBudget,
+      protectedEntries,
+      compressibleEntries,
+    })).trim();
+  } catch (error) {
+    params.onContextCompression?.({
+      category: "story_context",
+      phase: "error",
+      message: error instanceof Error ? error.message : String(error),
+      protectedTokens,
+      compressibleTokens,
+      budgetTokens: compileBudget,
+      sources: compressibleEntries.map((entry) => entry.source),
+    });
+    throw error;
+  }
   if (!compiled) {
+    params.onContextCompression?.({
+      category: "story_context",
+      phase: "error",
+      message: "Compressible context compiler returned empty output.",
+      protectedTokens,
+      compressibleTokens,
+      budgetTokens: compileBudget,
+      sources: compressibleEntries.map((entry) => entry.source),
+    });
     throw new Error("Compressible context compiler returned empty output.");
   }
+  params.onContextCompression?.({
+    category: "story_context",
+    phase: "end",
+    protectedTokens,
+    compressibleTokens,
+    budgetTokens: compileBudget,
+    sources: compressibleEntries.map((entry) => entry.source),
+  });
 
   return {
     contextPackage: ContextPackageSchema.parse({

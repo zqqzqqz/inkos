@@ -29,6 +29,7 @@ import type { AuditResult, AuditIssue } from "../agents/continuity.js";
 import type { RadarResult } from "../agents/radar.js";
 import type { LengthSpec, LengthTelemetry } from "../models/length-governance.js";
 import type { ChapterMemo, ContextPackage, RuleStack } from "../models/input-governance.js";
+import type { ContextCompressionCallback } from "../models/context-compression.js";
 import { buildLengthSpec, countChapterLength, formatLengthCount, isOutsideHardRange, resolveLengthCountingMode, type LengthLanguage } from "../utils/length-metrics.js";
 import { analyzeLongSpanFatigue } from "../utils/long-span-fatigue.js";
 import { buildWritingMethodologySection } from "../utils/writing-methodology.js";
@@ -265,6 +266,7 @@ export interface PipelineConfig {
   readonly inputGovernanceMode?: InputGovernanceMode;
   readonly logger?: Logger;
   readonly onStreamProgress?: OnStreamProgress;
+  readonly onContextCompression?: ContextCompressionCallback;
 }
 
 export interface TokenUsageSummary {
@@ -3528,6 +3530,7 @@ ${matrix}`,
       plan,
       contextBudget: contextBudgetFromClient(composerCtx.client),
       compressibleContextCompiler: (request) => composer.compileCompressibleContext(request),
+      onContextCompression: this.config.onContextCompression,
     });
 
     return { plan, composed };

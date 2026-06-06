@@ -100,6 +100,67 @@ describe("buildPartsFromEvents", () => {
     }
   });
 
+  it("renders session context compression as a visible running card when no tool is active", () => {
+    const parts = buildPartsFromEvents([
+      {
+        type: "context:compression",
+        category: "session_context",
+        phase: "start",
+        sources: ["story/current_state.md"],
+      },
+      {
+        type: "context:compression",
+        category: "session_context",
+        phase: "end",
+        sources: ["story/current_state.md"],
+      },
+    ]);
+
+    expect(parts).toHaveLength(1);
+    expect(parts[0].type).toBe("tool");
+    if (parts[0].type === "tool") {
+      expect(parts[0].execution.tool).toBe("context_compression");
+      expect(parts[0].execution.label).toBe("整理会话记忆");
+      expect(parts[0].execution.status).toBe("completed");
+      expect(parts[0].execution.stages?.[0]).toMatchObject({
+        label: "整理会话记忆",
+        status: "completed",
+      });
+    }
+  });
+
+  it("renders story context compression as a visible stage inside the running writer tool", () => {
+    const parts = buildPartsFromEvents([
+      { type: "tool:start", id: "t1", tool: "sub_agent", agent: "writer", stages: ["准备章节输入", "撰写章节草稿"] },
+      {
+        type: "context:compression",
+        category: "story_context",
+        phase: "start",
+        protectedTokens: 1200,
+        compressibleTokens: 9000,
+        budgetTokens: 6000,
+      },
+      {
+        type: "context:compression",
+        category: "story_context",
+        phase: "end",
+        protectedTokens: 1200,
+        compressibleTokens: 9000,
+        budgetTokens: 6000,
+      },
+    ]);
+
+    expect(parts).toHaveLength(1);
+    expect(parts[0].type).toBe("tool");
+    if (parts[0].type === "tool") {
+      const compressionStage = parts[0].execution.stages?.find((stage) => stage.label === "压缩故事上下文");
+      expect(compressionStage).toMatchObject({
+        label: "压缩故事上下文",
+        status: "completed",
+      });
+    }
+  });
+
   it("handles multi-turn thinking (append, not overwrite)", () => {
     const parts = buildPartsFromEvents([
       { type: "thinking:start" },

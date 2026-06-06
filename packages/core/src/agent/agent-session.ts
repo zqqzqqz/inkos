@@ -44,6 +44,7 @@ import {
 import type { TranscriptEvent, TranscriptRole } from "../interaction/session-transcript-schema.js";
 import type { PlayMode, SessionKind } from "../interaction/session.js";
 import type { ActionPayload, ActionSource, RequestedIntent } from "../interaction/action-envelope.js";
+import type { ContextCompressionCallback } from "../models/context-compression.js";
 import { assertSafeBookId } from "../utils/book-id.js";
 import { PlayStore } from "../play/play-store.js";
 
@@ -80,6 +81,8 @@ export interface AgentSessionConfig {
   allowSystemFileRead?: boolean;
   /** Optional listener for streaming events (for SSE forwarding). */
   onEvent?: (event: AgentEvent) => void;
+  /** Optional listener for context compression lifecycle events. */
+  onContextCompression?: ContextCompressionCallback;
 }
 
 export interface AgentSessionResult {
@@ -673,7 +676,7 @@ async function runAgentSessionUnlocked(
   userMessage: string,
   initialMessages?: Array<{ role: string; content: string }>,
 ): Promise<AgentSessionResult> {
-  const { sessionId, language, pipeline, projectRoot, onEvent } = config;
+  const { sessionId, language, pipeline, projectRoot, onEvent, onContextCompression } = config;
   // Normalize at the entry point so downstream comparisons, closures, and
   // fs paths never see `undefined`. The type is already `string | null`, but
   // some callers may bypass the type system (e.g. `activeBookId ?? null` gets
@@ -737,9 +740,22 @@ async function runAgentSessionUnlocked(
   }
 
   if (!cached) {
+    const restoredHistory = await restoreAgentMessagesFromTranscript(projectRoot, sessionId, sessionKind);
+    if (restoredHistory.length > 0) {
+      onContextCompression?.({
+        category: "session_context",
+        phase: "start",
+        sources: ["session transcript"],
+      });
+      onContextCompression?.({
+        category: "session_context",
+        phase: "end",
+        sources: ["session transcript"],
+      });
+    }
     const restoredMessages = appendRestoredHistoryBoundary(
       adaptRestoredAgentMessagesForModel(
-        await restoreAgentMessagesFromTranscript(projectRoot, sessionId, sessionKind),
+        restoredHistory,
         model,
       ),
       language,
@@ -770,7 +786,7 @@ async function runAgentSessionUnlocked(
         }),
         messages: initialAgentMessages,
       },
-      transformContext: createBookContextTransform(bookId, projectRoot),
+      transformContext: createBookContextTransform(bookId, projectRoot, { onContextCompression }),
       convertToLlm: (messages) => {
         terminalProposalTail = isTerminalProposalTail(messages);
         return convertAgentMessagesForModel(messages, model);

@@ -3,6 +3,7 @@ import type { UserMessage } from "@mariozechner/pi-ai";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { isNewLayoutBook } from "../utils/outline-paths.js";
+import type { ContextCompressionCallback } from "../models/context-compression.js";
 
 /** Files read in this order; anything else in story/ comes after, sorted alphabetically. */
 const PRIORITY_FILES = [
@@ -28,6 +29,7 @@ const UPGRADE_HINT =
 export function createBookContextTransform(
   bookId: string | null,
   projectRoot: string,
+  options: { readonly onContextCompression?: ContextCompressionCallback } = {},
 ): (messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]> {
   if (bookId === null) {
     return async (messages) => messages;
@@ -42,11 +44,30 @@ export function createBookContextTransform(
 
     const isNew = await isNewLayoutBook(bookDir);
     const hintBlock = isNew ? "" : `\n\n${UPGRADE_HINT}`;
+    const compactedSources = sections
+      .filter((section) => section.content.length > FULL_INLINE_CHAR_LIMIT)
+      .map((section) => section.name);
+
+    if (compactedSources.length > 0) {
+      options.onContextCompression?.({
+        category: "session_context",
+        phase: "start",
+        sources: compactedSources,
+      });
+    }
 
     const body =
       "[以下是当前书籍的上下文压缩包，每次对话时自动从磁盘读取生成。请基于这些内容进行创作和判断；需要完整原文时再按文件读取。]" +
       hintBlock + "\n\n" +
       sections.map(renderContextSection).join("\n\n");
+
+    if (compactedSources.length > 0) {
+      options.onContextCompression?.({
+        category: "session_context",
+        phase: "end",
+        sources: compactedSources,
+      });
+    }
 
     const injected: UserMessage = {
       role: "user",

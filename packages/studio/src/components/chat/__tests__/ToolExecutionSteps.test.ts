@@ -119,6 +119,20 @@ describe("groupChronologically", () => {
     expect(groups[1].type === "pipeline" ? groups[1].exec.tool : "").toBe("propose_action");
   });
 
+  it("renders context compression as a visible pipeline card", () => {
+    const execs: ToolExecution[] = [
+      makeExec({ id: "1", tool: "read", label: "读取文件" }),
+      makeExec({ id: "2", tool: "context_compression", label: "整理会话记忆" }),
+      makeExec({ id: "3", tool: "grep", label: "搜索" }),
+    ];
+
+    const groups = groupToolExecutionsChronologically(execs);
+
+    expect(groups).toHaveLength(3);
+    expect(groups.map((group) => group.type)).toEqual(["utilities", "pipeline", "utilities"]);
+    expect(groups[1].type === "pipeline" ? groups[1].exec.tool : "").toBe("context_compression");
+  });
+
   it("extracts generated cover details from public short fiction tools", () => {
     const exec = makeExec({
       id: "short-1",

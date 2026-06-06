@@ -1463,6 +1463,12 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       modelOverrides: currentConfig.modelOverrides,
       notifyChannels: currentConfig.notify,
       logger,
+      onContextCompression: (event) => {
+        broadcast("context:compression", {
+          ...(overrides?.sessionIdForSSE ? { sessionId: overrides.sessionIdForSSE } : {}),
+          ...event,
+        });
+      },
       onStreamProgress: (progress) => {
         broadcast("llm:progress", {
           ...(overrides?.sessionIdForSSE ? { sessionId: overrides.sessionIdForSSE } : {}),
@@ -3196,6 +3202,12 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
           actionPayload,
           sessionId: bookSession.sessionId,
           language: surfaceLanguage,
+          onContextCompression: (event) => {
+            broadcast("context:compression", {
+              sessionId: streamSessionId,
+              ...event,
+            });
+          },
           onEvent: (event) => {
             if (event.type === "message_update") {
               const ame = event.assistantMessageEvent;

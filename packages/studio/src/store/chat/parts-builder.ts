@@ -11,7 +11,22 @@ export type StreamEvent =
   | { type: "tool:start"; id: string; tool: string; agent?: string; stages?: string[] }
   | { type: "tool:end"; id: string; isError?: boolean; result?: unknown; details?: unknown }
   | { type: "log:stage"; stageName: string }
-  | { type: "llm:progress"; status: string; elapsedMs: number; totalChars: number; chineseChars: number };
+  | { type: "llm:progress"; status: string; elapsedMs: number; totalChars: number; chineseChars: number }
+  | ContextCompressionStreamEvent;
+
+export type ContextCompressionCategory = "session_context" | "story_context";
+export type ContextCompressionPhase = "start" | "end" | "error";
+
+export interface ContextCompressionStreamEvent {
+  readonly type: "context:compression";
+  readonly category: ContextCompressionCategory;
+  readonly phase: ContextCompressionPhase;
+  readonly message?: string;
+  readonly protectedTokens?: number;
+  readonly compressibleTokens?: number;
+  readonly budgetTokens?: number;
+  readonly sources?: readonly string[];
+}
 
 // -- Label helpers --
 
@@ -21,6 +36,7 @@ const AGENT_LABELS: Record<string, string> = {
 };
 const TOOL_LABELS: Record<string, string> = {
   read: "读取文件", edit: "编辑文件", grep: "搜索", ls: "列目录",
+  context_compression: "整理上下文",
   propose_action: "确认动作",
   short_fiction_run: "短篇生产",
   generate_cover: "生成封面",
@@ -50,6 +66,82 @@ function summarizeToolResult(result: unknown): string {
     }
   }
   return String(result ?? "").slice(0, 2000);
+}
+
+function compressionLabel(category: ContextCompressionCategory): string {
+  return category === "session_context" ? "整理会话记忆" : "压缩故事上下文";
+}
+
+function compressionProgress(event: ContextCompressionStreamEvent): PipelineStage["progress"] | undefined {
+  if (event.phase !== "start") return undefined;
+  const parts = [
+    event.protectedTokens !== undefined ? `保护 ${event.protectedTokens}` : "",
+    event.compressibleTokens !== undefined ? `可压缩 ${event.compressibleTokens}` : "",
+    event.budgetTokens !== undefined ? `预算 ${event.budgetTokens}` : "",
+  ].filter(Boolean);
+  return {
+    status: parts.length > 0 ? parts.join(" · ") : "compressing",
+    elapsedMs: 0,
+    totalChars: 0,
+    chineseChars: 0,
+  };
+}
+
+function upsertCompressionStage(stages: PipelineStage[] | undefined, event: ContextCompressionStreamEvent): PipelineStage[] {
+  const label = compressionLabel(event.category);
+  const nextStatus: PipelineStage["status"] = event.phase === "start" ? "active" : "completed";
+  const found = stages?.some((stage) => stage.label === label) ?? false;
+  const base = found ? [...(stages ?? [])] : [...(stages ?? []), { label, status: "pending" as const }];
+  return base.map((stage) =>
+    stage.label === label
+      ? {
+          ...stage,
+          status: nextStatus,
+          progress: event.phase === "start" ? compressionProgress(event) : undefined,
+        }
+      : stage
+  );
+}
+
+function applyContextCompressionEvent(parts: MessagePart[], event: ContextCompressionStreamEvent): void {
+  const shouldUseStandaloneCard = event.category === "session_context";
+  const runningTool = shouldUseStandaloneCard ? undefined : findLastRunningTool(parts);
+  if (runningTool) {
+    runningTool.stages = upsertCompressionStage(runningTool.stages, event);
+    if (event.phase === "error") {
+      runningTool.status = "error";
+      runningTool.error = event.message ?? `${compressionLabel(event.category)}失败`;
+    }
+    return;
+  }
+
+  const id = `context-${event.category}`;
+  const existing = parts.find((part): part is { type: "tool"; execution: ToolExecution } =>
+    part.type === "tool" && part.execution.id === id
+  );
+  const status: ToolExecution["status"] = event.phase === "start" ? "running" : event.phase === "error" ? "error" : "completed";
+  const execution: ToolExecution = existing?.execution ?? {
+    id,
+    tool: "context_compression",
+    label: compressionLabel(event.category),
+    status,
+    startedAt: Date.now(),
+    stages: [],
+  };
+  execution.status = status;
+  execution.label = compressionLabel(event.category);
+  execution.stages = upsertCompressionStage(execution.stages, event);
+  if (event.phase !== "start") execution.completedAt = Date.now();
+  if (event.phase === "error") execution.error = event.message ?? `${compressionLabel(event.category)}失败`;
+  if (!existing) parts.push({ type: "tool", execution });
+}
+
+function findLastRunningTool(parts: MessagePart[]): ToolExecution | undefined {
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const p = parts[i];
+    if (p.type === "tool" && p.execution.status === "running") return p.execution;
+  }
+  return undefined;
 }
 
 // -- Builder --
@@ -198,6 +290,11 @@ export function buildPartsFromEvents(events: StreamEvent[]): MessagePart[] {
             ? { ...stage, progress: { status: event.status, elapsedMs: event.elapsedMs, totalChars: event.totalChars, chineseChars: event.chineseChars } }
             : stage
         );
+        break;
+      }
+
+      case "context:compression": {
+        applyContextCompressionEvent(parts, event);
         break;
       }
     }

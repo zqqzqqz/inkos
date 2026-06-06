@@ -315,6 +315,37 @@ describe("ComposerAgent", () => {
     expect(result.trace.notes).toContain("compiled-compressible-context");
   });
 
+  it("emits story context compression lifecycle events when compiling compressible context", async () => {
+    await writeFile(
+      join(storyDir, "chapter_summaries.md"),
+      [
+        "# Chapter Summaries",
+        "",
+        "| chapter | title | characters | events | stateChanges | hookActivity | mood | chapterType |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- |",
+        `| 1 | ${"旧章".repeat(1000)} | Lin Yue | Old archive noise | None | none | tight | investigation |`,
+      ].join("\n"),
+      "utf-8",
+    );
+    const events: Array<{ readonly category: string; readonly phase: string; readonly sources?: readonly string[] }> = [];
+
+    await composeGovernedChapter({
+      book,
+      bookDir,
+      chapterNumber: 4,
+      plan,
+      contextBudget: { contextWindowTokens: 900, reservedOutputTokens: 0 },
+      compressibleContextCompiler: async () => "压缩后的旧章标题历史。",
+      onContextCompression: (event) => events.push(event),
+    });
+
+    expect(events.map((event) => [event.category, event.phase])).toEqual([
+      ["story_context", "start"],
+      ["story_context", "end"],
+    ]);
+    expect(events[0].sources).toContain("story/chapter_summaries.md#recent_titles");
+  });
+
   it("fails loudly when protected context alone exceeds the input budget", async () => {
     await writeFile(
       join(storyDir, "author_intent.md"),
