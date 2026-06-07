@@ -51,6 +51,17 @@ describe("deriveFilePresentation", () => {
     });
     expect(result.canEdit).toBe(false);
   });
+
+  it("blocks editing for runtime diagnostic files", () => {
+    const result = deriveFilePresentation("runtime/chapter-0003.trace.json", {
+      content: "{\"chapter\":3}",
+      readonly: true,
+      readonlyReason: "runtime-diagnostic",
+    });
+    expect(result.canEdit).toBe(false);
+    expect(result.readonly).toBe(true);
+    expect(result.readonlyReason).toBe("runtime-diagnostic");
+  });
 });
 
 describe("SHIM_AUTHORITATIVE_PATH", () => {

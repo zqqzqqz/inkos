@@ -1935,11 +1935,13 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
   // GET handler tags them with `legacy: true` so the UI can surface that the
   // edits won't land where the user expects.
   const LEGACY_SHIM_FILES = new Set(["story_bible.md", "book_rules.md"]);
+  const RUNTIME_DIAGNOSTIC_FILE_RE = /^runtime\/chapter-\d{4}\.(?:intent\.md|plan\.md|context\.json|rule-stack\.yaml|trace\.json)$/;
 
   /**
    * Validate a requested truth-file path:
    *   1. Must be one of the declared flat files, an outline/* allow-listed
-   *      entry, or a roles/**\/*.md file under 主要角色/ | 次要角色/.
+   *      entry, a runtime chapter trace file, or a roles/**\/*.md file under
+   *      主要角色/ | 次要角色/.
    *   2. Must resolve to a path inside bookDir/story/ (no `..`, no absolute
    *      paths, no traversal via the tier-name segment).
    */
@@ -1956,6 +1958,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     const allowed =
       TRUTH_FLAT_FILES.includes(file)
       || TRUTH_OUTLINE_FILES.includes(file)
+      || RUNTIME_DIAGNOSTIC_FILE_RE.test(file)
       || /^roles\/(主要角色|次要角色|major|minor)\/[^/]+\.md$/.test(file);
 
     if (!allowed) return null;
@@ -2007,9 +2010,22 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       // unchanged; `body` is the prose with the frontmatter stripped.
       const parsed = tryParseBookRulesFrontmatter(content);
       const structured = parsed ? { frontmatter: parsed.rules, body: parsed.body } : {};
-      return c.json({ file, content, ...structured, ...(legacy ? { legacy: true } : {}) });
+      const runtimeDiagnostic = RUNTIME_DIAGNOSTIC_FILE_RE.test(file);
+      return c.json({
+        file,
+        content,
+        ...structured,
+        ...(legacy ? { legacy: true } : {}),
+        ...(runtimeDiagnostic ? { readonly: true, readonlyReason: "runtime-diagnostic" } : {}),
+      });
     } catch {
-      return c.json({ file, content: null, ...(legacy ? { legacy: true } : {}) });
+      const runtimeDiagnostic = RUNTIME_DIAGNOSTIC_FILE_RE.test(file);
+      return c.json({
+        file,
+        content: null,
+        ...(legacy ? { legacy: true } : {}),
+        ...(runtimeDiagnostic ? { readonly: true, readonlyReason: "runtime-diagnostic" } : {}),
+      });
     }
   });
 
@@ -2744,7 +2760,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     async function listDir(subdir: string): Promise<string[]> {
       try {
         const entries = await readdir(join(storyDir, subdir));
-        return entries.filter((f) => f.endsWith(".md") || f.endsWith(".json"));
+        return entries.filter((f) => f.endsWith(".md") || f.endsWith(".json") || f.endsWith(".yaml"));
       } catch {
         return [];
       }
@@ -2754,14 +2770,17 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     const { isNewLayoutBook } = await import("@actalk/inkos-core");
     const newLayout = await isNewLayoutBook(bookDir);
 
-    async function describe(relPath: string): Promise<{ readonly name: string; readonly size: number; readonly preview: string; readonly legacy?: true } | null> {
+    async function describe(relPath: string): Promise<{ readonly name: string; readonly size: number; readonly preview: string; readonly legacy?: true; readonly readonly?: true; readonly readonlyReason?: string } | null> {
       try {
         const content = await readFile(join(storyDir, relPath), "utf-8");
         const isShim = LEGACY_SHIM_FILES.has(relPath) && newLayout;
-        const entry: { readonly name: string; readonly size: number; readonly preview: string; readonly legacy?: true } =
+        const isRuntimeDiagnostic = RUNTIME_DIAGNOSTIC_FILE_RE.test(relPath);
+        const entry: { readonly name: string; readonly size: number; readonly preview: string; readonly legacy?: true; readonly readonly?: true; readonly readonlyReason?: string } =
           isShim
             ? { name: relPath, size: content.length, preview: content.slice(0, 200), legacy: true }
-            : { name: relPath, size: content.length, preview: content.slice(0, 200) };
+            : isRuntimeDiagnostic
+              ? { name: relPath, size: content.length, preview: content.slice(0, 200), readonly: true, readonlyReason: "runtime-diagnostic" }
+              : { name: relPath, size: content.length, preview: content.slice(0, 200) };
         return entry;
       } catch {
         return null;
@@ -2779,6 +2798,9 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       const minorRolesZh = (await listDir("roles/次要角色")).map((f) => `roles/次要角色/${f}`);
       const majorRolesEn = (await listDir("roles/major")).map((f) => `roles/major/${f}`);
       const minorRolesEn = (await listDir("roles/minor")).map((f) => `roles/minor/${f}`);
+      const runtimeFiles = (await listDir("runtime"))
+        .map((f) => `runtime/${f}`)
+        .filter((f) => RUNTIME_DIAGNOSTIC_FILE_RE.test(f));
 
       const all = [
         ...flatFiles,
@@ -2787,6 +2809,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
         ...minorRolesZh,
         ...majorRolesEn,
         ...minorRolesEn,
+        ...runtimeFiles,
       ];
       const described = await Promise.all(all.map(describe));
       const result = described.filter((x): x is NonNullable<typeof x> => x !== null);
@@ -4115,6 +4138,9 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
           400,
         );
       }
+    }
+    if (RUNTIME_DIAGNOSTIC_FILE_RE.test(file)) {
+      return c.json({ error: "Runtime diagnostic files are read-only" }, 400);
     }
     const { content } = await c.req.json<{ content: string }>();
     const { writeFile: writeFileFs, mkdir: mkdirFs } = await import("node:fs/promises");

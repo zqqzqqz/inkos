@@ -10,6 +10,8 @@ interface TruthFile {
   readonly size: number;
   readonly preview: string;
   readonly legacy?: boolean;
+  readonly readonly?: boolean;
+  readonly readonlyReason?: string;
 }
 
 // Phase 5 hotfix: shim files are read-only — point users at the
@@ -30,17 +32,26 @@ export interface FilePresentation {
   readonly canEdit: boolean;
   readonly legacy: boolean;
   readonly authoritativePath: string | null;
+  readonly readonly: boolean;
+  readonly readonlyReason: string | null;
 }
 
 export function deriveFilePresentation(
   fileName: string | null,
-  fileData: { content: string | null; legacy?: boolean } | null | undefined,
+  fileData: { content: string | null; legacy?: boolean; readonly?: boolean; readonlyReason?: string } | null | undefined,
 ): FilePresentation {
   const legacy = fileData?.legacy === true;
+  const readonly = fileData?.readonly === true;
   const authoritativePath = fileName ? SHIM_AUTHORITATIVE_PATH[fileName] ?? null : null;
   // Edit only makes sense when we actually have content AND it's not a shim.
-  const canEdit = !!fileName && !!fileData && fileData.content != null && !legacy;
-  return { canEdit, legacy, authoritativePath };
+  const canEdit = !!fileName && !!fileData && fileData.content != null && !legacy && !readonly;
+  return {
+    canEdit,
+    legacy,
+    authoritativePath,
+    readonly,
+    readonlyReason: readonly ? fileData?.readonlyReason ?? "readonly" : null,
+  };
 }
 
 interface Nav {
@@ -55,12 +66,13 @@ export function TruthFiles({ bookId, nav, theme, t }: { bookId: string; nav: Nav
   const [editMode, setEditMode] = useState(false);
   const [editText, setEditText] = useState("");
   const [savingEdit, setSavingEdit] = useState(false);
-  const { data: fileData, refetch: refetchFile } = useApi<{ file: string; content: string | null; legacy?: boolean }>(
+  const { data: fileData, refetch: refetchFile } = useApi<{ file: string; content: string | null; legacy?: boolean; readonly?: boolean; readonlyReason?: string }>(
     selected ? `/books/${bookId}/truth/${selected}` : "",
   );
 
   const presentation = deriveFilePresentation(selected, fileData);
   const isLegacyShim = presentation.legacy;
+  const isRuntimeDiagnostic = presentation.readonlyReason === "runtime-diagnostic";
 
   const startEdit = () => {
     setEditText(fileData?.content ?? "");
@@ -141,6 +153,17 @@ export function TruthFiles({ bookId, nav, theme, t }: { bookId: string; nav: Nav
                   </div>
                 </div>
               )}
+              {isRuntimeDiagnostic && (
+                <div
+                  data-testid="runtime-diagnostic-warning"
+                  className="mb-3 px-3 py-2 rounded-md border border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300 text-xs leading-relaxed"
+                >
+                  <div className="font-medium">运行时诊断文件 / Runtime diagnostic</div>
+                  <div className="mt-1">
+                    这里展示本章写作时的上下文选择、保护层、可压缩层和预算 trace。它只用于追溯系统看了什么，不作为可编辑设定。
+                  </div>
+                </div>
+              )}
               <div className="flex items-center justify-end gap-2 mb-3">
                 {editMode ? (
                   <>
@@ -161,7 +184,7 @@ export function TruthFiles({ bookId, nav, theme, t }: { bookId: string; nav: Nav
                     </button>
                   </>
                 ) : (
-                  !isLegacyShim && (
+                  presentation.canEdit && (
                     <button
                       onClick={startEdit}
                       className={`inline-flex items-center gap-1 px-3 py-1.5 text-xs rounded-md ${c.btnSecondary}`}

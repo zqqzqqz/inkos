@@ -654,6 +654,49 @@ describe("createStudioServer daemon lifecycle", () => {
     );
   });
 
+  it("exposes runtime context trace files as read-only truth diagnostics", async () => {
+    const bookDir = join(root, "books", "trace-book");
+    const storyDir = join(bookDir, "story");
+    await mkdir(join(storyDir, "runtime"), { recursive: true });
+    await writeFile(join(storyDir, "runtime", "chapter-0001.trace.json"), JSON.stringify({
+      chapter: 1,
+      contextTiers: { protectedSources: ["story/author_intent.md"], compressibleSources: [] },
+    }), "utf-8");
+
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const list = await app.request("http://localhost/api/v1/books/trace-book/truth");
+    expect(list.status).toBe(200);
+    await expect(list.json()).resolves.toMatchObject({
+      files: expect.arrayContaining([
+        expect.objectContaining({
+          name: "runtime/chapter-0001.trace.json",
+          readonly: true,
+          readonlyReason: "runtime-diagnostic",
+        }),
+      ]),
+    });
+
+    const read = await app.request("http://localhost/api/v1/books/trace-book/truth/runtime/chapter-0001.trace.json");
+    expect(read.status).toBe(200);
+    await expect(read.json()).resolves.toMatchObject({
+      file: "runtime/chapter-0001.trace.json",
+      readonly: true,
+      readonlyReason: "runtime-diagnostic",
+      content: expect.stringContaining("protectedSources"),
+    });
+
+    const write = await app.request("http://localhost/api/v1/books/trace-book/truth/runtime/chapter-0001.trace.json", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: "{}" }),
+    });
+    expect(write.status).toBe(400);
+    await expect(readFile(join(storyDir, "runtime", "chapter-0001.trace.json"), "utf-8"))
+      .resolves.toContain("protectedSources");
+  });
+
   it("reflects project edits immediately without restarting the studio server", async () => {
     const { createStudioServer } = await import("./server.js");
     const app = createStudioServer(cloneProjectConfig() as never, root);
